@@ -7,49 +7,53 @@ import argparse
 from collections import Counter
 from lib.generic import *
 
-def merge_data(hf: str, lf: str):
+def volume_formatter(num_bytes: float) -> str:
+    units = ['B', 'KB', 'MB', 'GB', 'TB']
+    size  = float(num_bytes)
 
-    l = pandas.read_csv(lf, sep=" ")
-    h = pandas.read_csv(hf, sep=" ")
+    for unit in units:
+        if size < 1024:
+            return f"{size:.2f} {unit}"
+        size /= 1024
+    return f"{size:.2f} {units[-1]}"
 
-    # Define the list of the record that are gonna be
-    # used in the dataframe
+def merge_data(coarse_samples_file: str, fine_samples_file: str, ratio: int):
     records = []
 
-    for index, record in l.iterrows():
+    # Generate a DataFrame for fine samples (high-frequency)
+    fine = pandas.read_csv(fine_samples_file, sep=" ")
 
-        #####################################################
-        #    Loop over the high frequency sampled file      #
-        #    and get all the records. For each one,         #
-        #    associate the rows from the low frequency      #
-        #    sampled file                                   #
-        #####################################################
+    # Generate a DataFrame for coarse samples (low-frequency)
+    coarse = pandas.read_csv(coarse_samples_file, sep=" ")
 
-        values = h[(h["te"] <= record["te"]) & (h["ts"] >= record["ts"])] 
+    # Initialize the index for the fine samples
+    index = 0
+
+    # Iterate through each coarse sample
+    for _, record in coarse.iterrows():
+        # Get the next `ratio` fine samples
+        matches = fine.iloc[index:index + ratio]
         
-        if not values.empty:
-            
-            # Flatten matching rows into a single row
-            rows = values.values.flatten()
-
-            # Create new column names for the matching rows
-            cols = [f"{col}_#{i}" for i in range(1, len(values) + 1) for col in values.columns]
-
-        else:
-            # If no rows match, create a zero-filled 
-            # array with the same number of columns as 
-            # values would have
-            rows = numpy.zeros(len(h.columns))
-            cols = [f"{col}_#1" for col in h.columns]
-
-        # Combine record with flattened rows (either matching or zero-filled)
-        combined_record = pandas.DataFrame([record.tolist() + rows.tolist()], columns=list(l.columns) + cols)
-
-        # Append the combined row to the final records
-        records.append(combined_record)
+        # Update the index to point to the next set of fine samples
+        index += ratio
         
-    frame = pandas.concat(records, ignore_index=True)
-    return frame
+        # Combine the coarse sample with the fine samples
+        combined_values = list(record.values) + matches.values.flatten().tolist()
+
+        # Create labels for the fine samples with the appropriate suffix
+        labels = []
+        for num in range(ratio):
+            labels.extend([f"{col}_#{num}" for col in fine.columns])
+
+        # Create labels for the coarse sample
+        combined_labels = list(coarse.columns) + labels
+        
+        # Add the combined record to the list
+        records.append(dict(zip(combined_labels, combined_values)))
+
+    # Return a new DataFrame with the combined data
+    return pandas.DataFrame(records)
+
 
 def args():
     parser = argparse.ArgumentParser()
@@ -61,57 +65,53 @@ def args():
     # Get the arguments
     return args.folder, args.output
 
-#############################
-#           MAIN            #
-#############################
-
 def main():
     folder, output = args()
 
     print(f"MERGER is running on [{folder}] for service...")
     
-    #############################
-    #           TCP             #
-    #############################
+    corse = 10_000
+    fine  = 1_000
+    ratio = int(corse / fine)
     
-    # High frequency files
-    dir = os.path.join(folder, "samples", "tcp", str(1000))
-    hff = sorted([os.path.join(dir, f) for f in os.listdir(dir)])
+    # Fine samples
+    dir = os.path.join(folder, "samples", "tcp", str(fine))
+    fine_sample_files  = sorted([os.path.join(dir, f) for f in os.listdir(dir)])
 
-    # Low frequency files
-    dir = os.path.join(folder, "samples", "tcp", str(10_000))
-    lff = sorted([os.path.join(dir, f) for f in os.listdir(dir)])
+    # Coarse samples
+    dir = os.path.join(folder, "samples", "tcp", str(corse))
+    coarse_sample_files = sorted([os.path.join(dir, f) for f in os.listdir(dir)])
          
     # Create the output directory if it does not exist yet
-    out = os.path.join(output, "tcp_data", os.path.basename(folder))
+    out = os.path.join(output, "TCP", os.path.basename(folder))
     if not os.path.exists(out):
         cmd = f"mkdir -p {out}"
         os.system(cmd)
 
-    for num, (hf, lf) in enumerate(zip(hff, lff)):
-        frame = merge_data(hf=hf, lf=lf)
+    for num, (fine_samples_file, coarse_samples_file) in enumerate(zip(fine_sample_files, coarse_sample_files)):
+        frame = merge_data(coarse_samples_file=coarse_samples_file, fine_samples_file=fine_samples_file, ratio=ratio)
         frame.to_csv(os.path.join(out, f"sample-{num}"), index=False, sep=" ")
 
     #############################
     #           UDP             #
     #############################
         
-    # High frequency files
-    dir = os.path.join(folder, "samples", "udp", str(1000))
-    hff = sorted([os.path.join(dir, f) for f in os.listdir(dir)])
+    # Fine samples
+    dir = os.path.join(folder, "samples", "udp", str(fine))
+    fine_sample_files  = sorted([os.path.join(dir, f) for f in os.listdir(dir)])
 
-    # Low frequency files
-    dir = os.path.join(folder, "samples", "udp", str(10_000))
-    lff = sorted([os.path.join(dir, f) for f in os.listdir(dir)])
-    
+    # Coarse samples
+    dir = os.path.join(folder, "samples", "udp", str(corse))
+    coarse_sample_files = sorted([os.path.join(dir, f) for f in os.listdir(dir)])
+         
     # Create the output directory if it does not exist yet
-    out = os.path.join(output, "udp_data", os.path.basename(folder))
+    out = os.path.join(output, "UDP", os.path.basename(folder))
     if not os.path.exists(out):
         cmd = f"mkdir -p {out}"
         os.system(cmd)
 
-    for num, (hf, lf) in enumerate(zip(hff, lff)):
-        frame = merge_data(hf=hf, lf=lf)
+    for num, (fine_samples_file, coarse_samples_file) in enumerate(zip(fine_sample_files, coarse_sample_files)):
+        frame = merge_data(coarse_samples_file=coarse_samples_file, fine_samples_file=fine_samples_file, ratio=ratio)
         frame.to_csv(os.path.join(out, f"sample-{num}"), index=False, sep=" ")
 
 

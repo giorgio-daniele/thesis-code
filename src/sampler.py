@@ -28,58 +28,75 @@ def merge_intervals(intervals: list[list[float]]) -> list[list[float]]:
             result[-1][1] = max(result[-1][1], interval[1])
     return result
 
-def process_tcp(data: pandas.DataFrame, 
-                meta: pandas.DataFrame, ts: float, te: float, delta: float):
+
+def format_time(milliseconds: float) -> str:
+    ss = int(milliseconds // 1000)  # Convert milliseconds to full seconds
+    ms = int(milliseconds % 1000)   # Remaining milliseconds
+    return f"{ss}s;{ms}ms"
+
+def process_media_data(requests: pandas.DataFrame, mime_type: str, ts: float):
+    # Filter the data based on mime type
+    media = requests[requests["mime"].str.contains(mime_type)]
+
+    # Initialize defaults
+    mean = 0.0
+    http = "-"
+
+    # Process the media data if available
+    if not media.empty:
+        mean = media[f"{mime_type}_rate"].dropna().astype(float).mean()
+        http = "_".join(
+            f"{record['ts'] - ts}#{record['ts'] - ts}#{record[f'{mime_type}_rate']}"
+            for _, record in media.iterrows())
+    
+    return mean, http
+
+def sample_tcp(data: pandas.DataFrame, 
+               meta: pandas.DataFrame, ts: float, te: float, delta: float):
     
     records = []
     
-    for ti in range(ts, te, delta):
+    for ti in range(int(ts), int(te - delta), int(delta)):
         tj = ti + delta
         
-        # Select all bins that overlap [ts; te]
+        # Select all bins that overlap [ti; tj]
         bins = data[(data["ts"] <= tj) & (data["te"] >= ti)].copy()
 
-        # Select all reqs that overlap [ts; te]
+        # Select all reqs that overlap [ti; tj]
         reqs = meta[(meta["ts"] <= tj) & (meta["te"] >= ti)].copy()
 
         # Remove anything not well specified
         reqs = reqs.dropna(subset=["mime"])
 
         if bins.empty:
-            records.append([ti, tj, delta] + [0] * (len(TCP_METRICS) - 3))
+            records.append([ti, tj, delta] + [0] * (len(TCP_METRICS) - 5) + ["-", "-"])
             continue
 
-        # Redefine each bin lower and upper bound
+        # Compute the relative start of each bin
         bins["rel_ts"] = numpy.maximum(bins["ts"], ti)
+        
+        # Compute the relative end of each bin
         bins["rel_te"] = numpy.minimum(bins["te"], tj)
-        bins["factor"] = ((bins["rel_te"] - bins["rel_ts"]) / (bins["te"] - bins["ts"]).replace(0, 1))
+
+        # Compute the overlap percentage
+        bins["factor"] = (bins["rel_te"] - bins["rel_ts"]) / (bins["te"] - bins["ts"]).replace(0, 1)
 
         """
         =============================
         =      Temporal stats       =
         =============================
         """
-        
-        # Have the bins as intervals
+        # Compute total time span in this delta (merged intervals)
         ints = bins[["rel_ts", "rel_te"]].values.tolist()
-
-        # Sum the overall time within delta
         span = sum(end - start for start, end in merge_intervals(ints))
 
-        # Compute idle time (that how much delta time is filled)
+        # Compute idle time (the amount of delta time not filled)
         idle = delta - span
 
-
-        # Compute the average  span of bins
+        # Compute stats for bin durations
         avg_span = (bins["rel_te"] - bins["rel_ts"]).mean()
-
-        # Compute the maximum span of bins
         max_span = (bins["rel_te"] - bins["rel_ts"]).max()
-
-        # Compute the minimum span of bins
         min_span = (bins["rel_te"] - bins["rel_ts"]).min()
-
-        # Compute the standard span of bins
         std_span = (bins["rel_te"] - bins["rel_ts"]).std()
 
         """
@@ -87,153 +104,109 @@ def process_tcp(data: pandas.DataFrame,
         =     Volumetric stats      =
         =============================
         """
+        # Volumetric statistics (scaled by factor)
+        c_ack_cnt    = float((bins["c_ack_cnt"]    * bins["factor"]).sum())
+        c_ack_cnt_p  = float((bins["c_ack_cnt_p"]  * bins["factor"]).sum())
+        c_bytes_all  = float((bins["c_bytes_all"]  * bins["factor"]).sum())
+        c_bytes_uniq = float((bins["c_bytes_uniq"] * bins["factor"]).sum())
+        # c_packs_retx = float((bins["c_packs_retx"] * bins["factor"]).sum())
+        # c_bytes_retx = float((bins["c_bytes_retx"] * bins["factor"]).sum())
 
-        # Client side (volumetric statistics)
-        c_ack_cnt   = float((bins["c_ack_cnt"]   * bins["factor"]).sum())  
-        c_ack_cnt_p = float((bins["c_ack_cnt_p"] * bins["factor"]).sum())  
-        c_bytes_all = float((bins["c_bytes_all"] * bins["factor"]).sum())  
-
-        # Server side (volumetric statistics)
-        s_ack_cnt   = float((bins["s_ack_cnt"]   * bins["factor"]).sum())  
-        s_ack_cnt_p = float((bins["s_ack_cnt_p"] * bins["factor"]).sum())  
-        s_bytes_all = float((bins["s_bytes_all"] * bins["factor"]).sum()) 
-
-        """
-        =============================
-        =   Ground Truth (Video)    =
-        =============================
-        """
-
-        # Get video-related info
-        video = reqs[reqs["mime"].str.contains("video")]
-
-        avg_video       = 0
-        video_sequence  = []
-
-        if video is not None:
-            # Replace NaN values with 0
-            video = video.fillna(0)
-
-            # Get the average resolution
-            avg_video = video["video_rate"].astype(float).mean()
-                        
-            # Generate a list of tuples in which there are
-            # (ts, te, video_rate), when the request has
-            # started, when the request has finished and
-            # the value of such request in string format
-            
-            sequences = []
-            for num, rec in video.iterrows():
-                sequence = str(rec["ts"]) + "-" + str(rec["te"]) + "=" + str(rec["video_rate"])
-                sequences.append(sequence)
-            video_sequence = " ".join(sequences)
-            
+        s_ack_cnt    = float((bins["s_ack_cnt"]    * bins["factor"]).sum())
+        s_ack_cnt_p  = float((bins["s_ack_cnt_p"]  * bins["factor"]).sum())
+        s_bytes_all  = float((bins["s_bytes_all"]  * bins["factor"]).sum())
+        s_bytes_uniq = float((bins["s_bytes_uniq"] * bins["factor"]).sum())
+        # s_packs_retx = float((bins["s_packs_retx"] * bins["factor"]).sum())
+        # s_bytes_retx = float((bins["s_bytes_retx"] * bins["factor"]).sum())
 
         """
         =============================
-        =   Ground Truth (Audio)    =
+        =     Ground Truth (A/V)    =
         =============================
         """
-
-        # Get video-related info
-        audio = reqs[reqs["mime"].str.contains("audio")]
-
-        avg_audio       = 0
-        audio_sequence  = []
-
-        if audio is not None:
-            # Replace NaN values with 0
-            audio = audio.fillna(0)
-
-            # Get the average resolution
-            avg_audio = audio["audio_rate"].astype(float).mean()
+        # Process media data (video/audio ground truth)
+        avg_video, video_sequence = process_media_data(reqs, "video", ts)
+        avg_audio, audio_sequence = process_media_data(reqs, "audio", ts)
             
-            # Generate a list of tuples in which there are
-            # (ts, te, video_rate), when the request has
-            # started, when the request has finished and
-            # the value of such request in string format
-            
-            sequences = []
-            for num, rec in audio.iterrows():
-                sequence = str(rec["ts"]) + ":" + str(rec["te"]) + "=" + str(rec["audio_rate"])
-                sequences.append(sequence)
-            audio_sequence = " ".join(sequences)
-            
-
+        # Append the computed values for the current delta (ti, tj)
         records.append([
             ti, tj, idle,
-            # Collected metrics from Tstat
-            avg_span, std_span,
-            max_span, min_span,
-            c_ack_cnt, c_ack_cnt_p, c_bytes_all,
-            s_ack_cnt, s_ack_cnt_p, s_bytes_all,
-            # Groud truth
+            
+            # Tstat data
+            avg_span, 
+            std_span, 
+            max_span, 
+            min_span,
+            
+            # Server to client side
+            c_ack_cnt, c_ack_cnt_p, c_bytes_all, c_bytes_uniq,
+            
+            # Client to server side
+            s_ack_cnt, s_ack_cnt_p, s_bytes_all, s_bytes_uniq,
+            
+            # Ground Truth audio
             avg_video, avg_audio,
-            video_sequence,
-            audio_sequence
+            # Ground Truth video
+            video_sequence, audio_sequence
         ])
-
+        
+    # Create a pandas DataFrame from the collected records
     metrics = pandas.DataFrame(records, columns=TCP_METRICS)
 
     if not metrics.empty:
         first_ts = metrics["ts"].iloc[0]
         metrics["ts"] -= first_ts
         metrics["te"] -= first_ts
-            
+        
     return metrics
 
-def process_udp(data: pandas.DataFrame, 
-                meta: pandas.DataFrame, ts: float, te: float, delta: float):
 
+def sample_udp(data: pandas.DataFrame, 
+               meta: pandas.DataFrame, ts: float, te: float, delta: float):
+    
     records = []
     
-    for ti in range(ts, te, delta): 
+    for ti in range(int(ts), int(te - delta), int(delta)):
         tj = ti + delta
         
-        # Select all bins that overlap [ts; te]
+        # Select all bins that overlap [ti; tj]
         bins = data[(data["ts"] <= tj) & (data["te"] >= ti)].copy()
 
-        # Select all reqs that overlap [ts; te]
+        # Select all reqs that overlap [ti; tj]
         reqs = meta[(meta["ts"] <= tj) & (meta["te"] >= ti)].copy()
 
         # Remove anything not well specified
         reqs = reqs.dropna(subset=["mime"])
 
         if bins.empty:
-            records.append([ti, tj, delta] + [0] * (len(UDP_METRICS) - 3))
+            records.append([ti, tj, delta] + [0] * (len(UDP_METRICS) - 5) + ["-", "-"])
             continue
 
-        # Redefine each bin lower and upper bound
+        # Compute the relative start of each bin
         bins["rel_ts"] = numpy.maximum(bins["ts"], ti)
+        
+        # Compute the relative end of each bin
         bins["rel_te"] = numpy.minimum(bins["te"], tj)
-        bins["factor"] = ((bins["rel_te"] - bins["rel_ts"]) / (bins["te"] - bins["ts"]).replace(0, 1))
+
+        # Compute the overlap percentage
+        bins["factor"] = (bins["rel_te"] - bins["rel_ts"]) / (bins["te"] - bins["ts"]).replace(0, 1)
 
         """
         =============================
         =      Temporal stats       =
         =============================
         """
-        
-        # Have the bins as intervals
+        # Compute total time span in this delta (merged intervals)
         ints = bins[["rel_ts", "rel_te"]].values.tolist()
-
-        # Sum the overall time within delta
         span = sum(end - start for start, end in merge_intervals(ints))
 
-        # Compute idle time (that how much delta time is filled)
+        # Compute idle time (the amount of delta time not filled)
         idle = delta - span
 
-
-        # Compute the average  span of bins
+        # Compute stats for bin durations
         avg_span = (bins["rel_te"] - bins["rel_ts"]).mean()
-
-        # Compute the maximum span of bins
         max_span = (bins["rel_te"] - bins["rel_ts"]).max()
-
-        # Compute the minimum span of bins
         min_span = (bins["rel_te"] - bins["rel_ts"]).min()
-
-        # Compute the standard span of bins
         std_span = (bins["rel_te"] - bins["rel_ts"]).std()
 
         """
@@ -241,98 +214,52 @@ def process_udp(data: pandas.DataFrame,
         =     Volumetric stats      =
         =============================
         """
-
-        # Client side (volumetric statistics)
-        c_bytes_all = float((bins["c_bytes_all"] * bins["factor"]).sum())  
-
-        # Server side (volumetric statistics)
-        s_bytes_all = float((bins["s_bytes_all"] * bins["factor"]).sum()) 
-
-
-        """
-        =============================
-        =   Ground Truth (Video)    =
-        =============================
-        """
-
-        # Get video-related info
-        video = reqs[reqs["mime"].str.contains("video/mp4")]
-    
-        avg_video      = 0
-        video_sequence = []
+        # Volumetric statistics (scaled by factor)
+        c_bytes_all  = float((bins["c_bytes_all"]  * bins["factor"]).sum())
         
-        if video is not None:
-            # Replace NaN values with 0
-            video = video.fillna(0)
-
-            # Get the average resolution
-            avg_video = video["video_rate"].astype(float).mean()
-            
-            # Generate a list of tuples in which there are
-            # (ts, te, video_rate), when the request has
-            # started, when the request has finished and
-            # the value of such request in string format
-            
-            sequences = []
-            for num, rec in video.iterrows():
-                sequence = str(rec["ts"]) + "-" + str(rec["te"]) + "=" + str(rec["video_rate"])
-                sequences.append(sequence)
-            video_sequence = " ".join(sequences)
-    
+        s_bytes_all  = float((bins["s_bytes_all"]  * bins["factor"]).sum())
 
         """
         =============================
-        =   Ground Truth (Audio)    =
+        =     Ground Truth (A/V)    =
         =============================
         """
-
-        # Get video-related info
-        audio = reqs[reqs["mime"].str.contains("audio/mp4")]
-
-        avg_audio      = 0
-        audio_sequence = []
-
-        if audio is not None:
-            # Replace NaN values with 0
-            audio = audio.fillna(0)
-
-            # Get the average resolution
-            avg_audio = audio["audio_rate"].astype(float).mean()
+        # Process media data (video/audio ground truth)
+        avg_video, video_sequence = process_media_data(reqs, "video", ts)
+        avg_audio, audio_sequence = process_media_data(reqs, "audio", ts)
             
-            # Generate a list of tuples in which there are
-            # (ts, te, video_rate), when the request has
-            # started, when the request has finished and
-            # the value of such request in string format
-            
-            sequences = []
-            for num, rec in audio.iterrows():
-                sequence = str(rec["ts"]) + ":" + str(rec["te"]) + "=" + str(rec["audio_rate"])
-                sequences.append(sequence)
-            audio_sequence = " ".join(sequences)
-            
-
+        # Append the computed values for the current delta (ti, tj)
         records.append([
             ti, tj, idle,
-            # Collected metrics from Tstat
-            avg_span, std_span,
-            max_span, min_span,
+            
+            # Tstat data
+            avg_span, 
+            std_span, 
+            max_span, 
+            min_span,
+            
+            # Server to client side
             c_bytes_all,
+            
+            # Client to server side
             s_bytes_all,
-            # Groud truth
+            
+            # Ground Truth audio
             avg_video, avg_audio,
-            video_sequence,
-            audio_sequence
+            # Ground Truth video
+            video_sequence, audio_sequence
         ])
-
+        
+    # Create a pandas DataFrame from the collected records
     metrics = pandas.DataFrame(records, columns=UDP_METRICS)
 
     if not metrics.empty:
         first_ts = metrics["ts"].iloc[0]
         metrics["ts"] -= first_ts
         metrics["te"] -= first_ts
-            
+        
     return metrics
-
+        
 
 def args():
     parser = argparse.ArgumentParser()
@@ -342,18 +269,11 @@ def args():
     # Get the arguments
     return parser.parse_args().folder, parser.parse_args().server
 
-#############################
-#           MAIN            #
-#############################
-
 def main():
     folder, server = args()
 
-    print(f"SAMPLER is running on [{folder}] for service [{server}]...")
-
     # Define the steps
-    #steps = [i * 1000 for i in range(1, 3, 1)]
-    steps  = [i * 1000 for i in range(1, 11, 1)]
+    steps = [i * 1000 for i in range(1, 11, 1)]
 
     # Check if the folder contains tests folder
     dir = os.path.join(folder, "tests")
@@ -401,7 +321,7 @@ def main():
         har = pandas.read_csv(har_file, sep=" ")
 
         evs = periods(path=bot_file)
-
+        
         for evn in evs:
             ts, te = evn[0], evn[1]
             
@@ -419,23 +339,21 @@ def main():
             # Select all bins associated to linear flows
             tcp_filtered = tcp_filtered[tcp_filtered["cn"].apply(lambda cn: matches(cname=cn, expressions=regexs))]
 
-
             """
             =============================
             =    Processing UDP Layer   =
             =============================
             """
-
+        
             # Select all bins that overlap [ts; te]
             udp_fitered = udp[(udp["ts"] <= te) & (udp["te"] >= ts)]
             
-            if udp.empty:
-                print("UDP DataFrame is empty after filtering on 'ts' and 'te'")
-
             # Select all bins associated to linear flows
             udp_fitered = udp_fitered[udp_fitered["cn"].apply(lambda cn: matches(cname=cn, expressions=regexs))]
             
-            if len(tcp_filtered) + len(udp_fitered) == 0:
+            # Compute the total
+            tot = len(tcp_filtered) + len(udp_fitered)
+            if tot == 0:
                 continue
             
             """
@@ -444,14 +362,14 @@ def main():
             ==================================
             """
 
-
             # TCP-based streaming period
-            if len(tcp_filtered) / (len(tcp_filtered) + len(udp_fitered)) >= 0.9:
+            if len(tcp_filtered) / tot >= 0.9:
                 for step in steps:
-                    res = process_tcp(data=tcp_filtered, meta=har, ts=ts, te=te, delta=step)
-                    tsp = str(uuid.uuid4())
-                    out = os.path.join(folder, "samples", "tcp", str(step), str(tsp))
-                    res.to_csv(out, sep=" ", index=False)
+                    print(f"\tUsing {step} as stepping interval")
+                    frame  = sample_tcp(data=tcp_filtered, meta=har, ts=ts, te=te, delta=step)
+                    title  = str(uuid.uuid4())
+                    output = os.path.join(folder, "samples", "tcp", str(step), str(title))
+                    frame.to_csv(output, sep=" ", index=False)
                     
             """
             ==================================
@@ -460,16 +378,17 @@ def main():
             """
 
             # UDP-based streaming period
-            if len(udp_fitered) / (len(tcp_filtered) + len(udp_fitered)) >= 0.9:
+            if len(udp_fitered) / tot >= 0.9:
                 for step in steps:
-                    tsp = str(uuid.uuid4())
-                    res = process_udp(data=udp_fitered, meta=har, ts=ts, te=te, delta=step)
-                    out = os.path.join(folder, "samples", "udp", str(step), str(tsp))
-                    res.to_csv(out, sep=" ", index=False)
-                    
+                    print(f"\tUsing {step} as stepping interval")
+                    frame  = sample_udp(data=udp_fitered, meta=har, ts=ts, te=te, delta=step)
+                    title  = str(uuid.uuid4())
+                    output = os.path.join(folder, "samples", "udp", str(step), str(title))
+                    frame.to_csv(output, sep=" ", index=False)
+    
     for step in steps:
-        # Rename all TCP samples
         dir = os.path.join(folder, "samples", "tcp", str(step))
+        # Rename all TCP samples
         for num, out in enumerate(os.listdir(dir)):
             src = os.path.join(dir, out)
             dst = os.path.join(dir, f"sample-{num}")
@@ -484,9 +403,9 @@ def main():
             cmd = f"mv {src} {dst}"
             os.system(cmd)
             
-    print()
+    #print()
 
 if __name__ == "__main__":
-    print("-" * 50)
+    #print("-" * 50)
     main()
-    print("-" * 50)
+    #print("-" * 50)

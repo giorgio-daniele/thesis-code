@@ -81,10 +81,12 @@ TCP_METRICS = [
     "c_ack_cnt", 
     "c_ack_cnt_p", 
     "c_bytes_all", 
+    "c_bytes_uniq",
     # Server metrics
     "s_ack_cnt", 
     "s_ack_cnt_p", 
     "s_bytes_all", 
+    "s_bytes_uniq",
     # Ground-truth
     "avg_video_rate",
     "avg_audio_rate",
