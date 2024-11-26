@@ -6,11 +6,11 @@ from collections import Counter
 from lib.generic import *
 
 # Constants for file names
-NUM_EVS_FILE = "num_evs"
-NUM_TCP_FILE = "num_tcp"
-NUM_UDP_FILE = "num_udp"
-TCP_STS_FILE = "tcp_sts"
-UDP_STS_FILE = "udp_sts"
+EVENTS_COUNTER_FILE = "events_discovered"
+TCP_FLOWS_COUNTER_FILE = "tcp_flows_discovered"
+UDP_FLOWS_COUNTER_FILE = "udp_flows_discovered"
+CNAMES_OVER_TCP_FILE = "cnames_over_tcp"
+CNAMES_OVER_UDP_FILE = "cnames_over_udp"
 
 def args():
     parser = argparse.ArgumentParser()
@@ -62,21 +62,21 @@ def main():
         os.makedirs(METADATA, exist_ok=True)
     else:
         try:
-            with open(os.path.join(METADATA, NUM_EVS_FILE), "r") as f:
+            with open(os.path.join(METADATA, EVENTS_COUNTER_FILE), "r") as f:
                 num_evs = int(f.readline().strip())
-            with open(os.path.join(METADATA, NUM_TCP_FILE), "r") as f:
+            with open(os.path.join(METADATA, TCP_FLOWS_COUNTER_FILE), "r") as f:
                 num_tcp = int(f.readline().strip())
-            with open(os.path.join(METADATA, NUM_UDP_FILE), "r") as f:
+            with open(os.path.join(METADATA, UDP_FLOWS_COUNTER_FILE), "r") as f:
                 num_udp = int(f.readline().strip())
         except Exception as e:
             pass
 
-        if os.path.exists(os.path.join(METADATA, TCP_STS_FILE)):
-            tcp_sts = pandas.read_csv(os.path.join(METADATA, TCP_STS_FILE), sep=" ")
+        if os.path.exists(os.path.join(METADATA, CNAMES_OVER_TCP_FILE)):
+            tcp_sts = pandas.read_csv(os.path.join(METADATA, CNAMES_OVER_TCP_FILE), sep=" ")
             tcp_count.update(dict(zip(tcp_sts["cn"], tcp_sts["count"])))
 
-        if os.path.exists(os.path.join(METADATA, UDP_STS_FILE)):
-            udp_sts = pandas.read_csv(os.path.join(METADATA, UDP_STS_FILE), sep=" ")
+        if os.path.exists(os.path.join(METADATA, CNAMES_OVER_UDP_FILE)):
+            udp_sts = pandas.read_csv(os.path.join(METADATA, CNAMES_OVER_UDP_FILE), sep=" ")
             udp_count.update(dict(zip(udp_sts["cn"], udp_sts["count"])))
 
     print(f"Statistics at this runtime")
@@ -133,21 +133,21 @@ def main():
             num_evs += 1
 
     # Update on disk
-    with open(os.path.join(METADATA, NUM_EVS_FILE), "w") as f:
+    with open(os.path.join(METADATA, EVENTS_COUNTER_FILE), "w") as f:
         f.write(f"{num_evs}\n")
-    with open(os.path.join(METADATA, NUM_TCP_FILE), "w") as f:
+    with open(os.path.join(METADATA, TCP_FLOWS_COUNTER_FILE), "w") as f:
         f.write(f"{num_tcp}\n")
-    with open(os.path.join(METADATA, NUM_UDP_FILE), "w") as f:
+    with open(os.path.join(METADATA, UDP_FLOWS_COUNTER_FILE), "w") as f:
         f.write(f"{num_udp}\n")
 
     # Write back updated statistics for TCP CNAMEs
-    with open(os.path.join(METADATA, TCP_STS_FILE), "w") as f:
+    with open(os.path.join(METADATA, CNAMES_OVER_TCP_FILE), "w") as f:
         f.write("cn count\n")
         for cname, count in tcp_count.items():
             f.write(f"{cname} {count}\n")
 
     # Write back updated statistics for UDP CNAMEs
-    with open(os.path.join(METADATA, UDP_STS_FILE), "w") as f:
+    with open(os.path.join(METADATA, CNAMES_OVER_UDP_FILE), "w") as f:
         f.write("cn count\n")
         for cname, count in udp_count.items():
             f.write(f"{cname} {count}\n")
