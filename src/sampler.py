@@ -363,7 +363,7 @@ def main():
             """
 
             # TCP-based streaming period
-            if len(tcp_filtered) / tot >= 0.9:
+            if len(tcp_filtered) / tot >= 0.85:
                 for step in steps:
                     print(f"\tUsing {step} as stepping interval")
                     frame  = sample_tcp(data=tcp_filtered, meta=har, ts=ts, te=te, delta=step)
@@ -378,7 +378,7 @@ def main():
             """
 
             # UDP-based streaming period
-            if len(udp_fitered) / tot >= 0.9:
+            if len(udp_fitered) / tot >= 0.85:
                 for step in steps:
                     print(f"\tUsing {step} as stepping interval")
                     frame  = sample_udp(data=udp_fitered, meta=har, ts=ts, te=te, delta=step)
