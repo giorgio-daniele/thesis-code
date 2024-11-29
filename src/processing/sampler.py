@@ -273,8 +273,8 @@ def main():
     folder, server = args()
 
     # Define the steps
-    # steps = [i * 1000 for i in range(1, 11, 1)]
-    steps = [1000, 10_000]
+    steps = [i * 1000 for i in range(1, 11, 1)]
+    # steps = [1000, 10_000]
 
     # Check if the folder contains tests folder
     dir = os.path.join(folder, "tests")
