@@ -1,0 +1,25 @@
+services:
+    - analytics.google.com
+    - google-analytics.com
+    - doubleclick.net
+    - akamai.net
+    - scorecardresearch.com
+    - newrelic.com
+    - fullstory.com
+    - onetrust.com
+    - appsflyer.com
+    - pendo.io
+    - mixpanel.com
+    - segment.com
+    - hotjar.com
+    - clicktale.com
+    - crazyegg.com
+    - qualaroo.com
+    - intercom.com
+    - sentry.io
+    - conviva.com
+    - redditstatic.com
+    - nr-data.net
+    - reddit.com
+    - t.co
+    - twitter

@@ -1,0 +1,51 @@
+video_288kbps:
+    bitrate: 288
+    width: 480
+    height: 270
+    framerate: 25
+video_480kbps:
+    bitrate: 480
+    width: 640
+    height: 360
+    framerate: 25
+video_840kbps:
+    bitrate: 840
+    width: 640
+    height: 960
+    framerate: 25
+video_1500kbps:
+    bitrate: 1500
+    width: 960
+    height: 540
+    framerate: 25
+video_2300kbps:
+    bitrate: 2300
+    width: 1280
+    height: 720
+    framerate: 25
+video_3000kbps:
+    bitrate: 3000
+    width: 1280
+    height: 720
+    framerate: 25
+video_4400kbps:
+    bitrate: 4400
+    width: 1280
+    height: 720
+    framerate: 50
+video_6500kbps:
+    bitrate: 6500
+    width: 1280
+    height: 720
+    framerate: 50
+video_8000kbps:
+    bitrate: 8000
+    width: 1920
+    height: 1080
+    framerate: 50
+audio_64kbps:
+    framerate: 48
+    bitrate: 64
+audio_128kbps:
+    framerate: 48
+    bitrate: 128

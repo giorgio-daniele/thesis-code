@@ -1,0 +1,54 @@
+stream_video_1:
+  bitrate: 8000
+  width: 1280
+  height: 720
+  framerate: 50
+stream_video_2:
+  bitrate: 6500
+  width: 1280
+  height: 720
+  framerate: 50
+stream_video_3:
+  bitrate: 4400
+  width: 1280
+  height: 720
+  framerate: 50
+stream_video_4:
+  bitrate: 3000
+  width: 1280
+  height: 720
+  framerate: 25
+stream_video_5:
+  bitrate: 2300
+  width: 1280
+  height: 720
+  framerate: 25
+stream_video_6:
+  bitrate: 1500
+  width: 960
+  height: 540
+  framerate: 25
+stream_video_7:
+  bitrate: 840
+  width: 960
+  height: 540
+  framerate: 25
+stream_video_8:
+  bitrate: 480
+  width: 960
+  height: 540
+  framerate: 25
+stream_video_9:
+  bitrate: 288
+  width: 480
+  height: 270
+  framerate: 25
+stream_audio_10:
+  framerate: 48
+  bitrate: 65604
+stream_audio_11:
+  framerate: 48
+  bitrate: 128058
+stream_audio_12:
+  framerate: 48
+  bitrate: 128

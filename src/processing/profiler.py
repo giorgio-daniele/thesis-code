@@ -3,156 +3,117 @@ import pandas
 import argparse
 
 from collections import Counter
-from lib.generic import *
 
-# Constants for file names
-EVENTS_COUNTER_FILE = "events_discovered"
-TCP_FLOWS_COUNTER_FILE = "tcp_flows_discovered"
-UDP_FLOWS_COUNTER_FILE = "udp_flows_discovered"
-CNAMES_OVER_TCP_FILE = "cnames_over_tcp"
-CNAMES_OVER_UDP_FILE = "cnames_over_udp"
+from lib import LOG_BOT_COMPLETE
+from lib import LOG_TCP_COMPLETE
+from lib import LOG_UDP_COMPLETE
+from lib import SERVERS
+
+from lib import periods
+
+# Output file names
+STREAMING_PERIODS_OBSERVED     = "streaming_periods_observed.dat"
+CPROVIDER_CNAMES_OBSERVED_TCP  = "content_provider_cnames_over_tcp.dat"
+CPROVIDER_CNAMES_OBSERVED_UDP  = "content_provider_cnames_over_udp.dat"
 
 def args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--folder", required=True)
     parser.add_argument("--server", required=True, choices=SERVERS)
-
-    # Get the arguments
     return parser.parse_args().folder, parser.parse_args().server
 
-#############################
-#           MAIN            #
-#############################
 
 def main():
     folder, server = args()
 
-    print(f"PROFILER is running on [{folder}] for service [{server}]...")
-
-    # Check if the folder contains tests folder
-    dir = os.path.join(folder, "tests")
-    if not os.path.exists(dir):
-        print(f"    There is an error: {folder} does not contain any tests")
-        exit(1)
-
-    # Check if tests folder is not empty
-    if len(os.listdir(dir)) == 0:
-        print(f"    There is an error: {folder}/tests is empty")
+    # Validate input
+    if not os.path.exists(folder):
+        print(f"[ERROR]: {folder} does not exist")
         exit(2)
 
-    if server == "dazn":
-        from lib.dazn import METADATA
-
-    # Init statistics
-    num_evs = 0
-    num_tcp = 0
-    num_udp = 0
-
-    # Init frames
-    tcp_sts = None
-    udp_sts = None
-
-    # Counters
-    tcp_count = Counter()
-    udp_count = Counter()
-
-    if not os.path.exists(METADATA):
-        print(f"    Metadata for {server} is not available")
-        print(f"    Creating a new one...")
-        os.makedirs(METADATA, exist_ok=True)
-    else:
-        try:
-            with open(os.path.join(METADATA, EVENTS_COUNTER_FILE), "r") as f:
-                num_evs = int(f.readline().strip())
-            with open(os.path.join(METADATA, TCP_FLOWS_COUNTER_FILE), "r") as f:
-                num_tcp = int(f.readline().strip())
-            with open(os.path.join(METADATA, UDP_FLOWS_COUNTER_FILE), "r") as f:
-                num_udp = int(f.readline().strip())
-        except Exception as e:
-            pass
-
-        if os.path.exists(os.path.join(METADATA, CNAMES_OVER_TCP_FILE)):
-            tcp_sts = pandas.read_csv(os.path.join(METADATA, CNAMES_OVER_TCP_FILE), sep=" ")
-            tcp_count.update(dict(zip(tcp_sts["cn"], tcp_sts["count"])))
-
-        if os.path.exists(os.path.join(METADATA, CNAMES_OVER_UDP_FILE)):
-            udp_sts = pandas.read_csv(os.path.join(METADATA, CNAMES_OVER_UDP_FILE), sep=" ")
-            udp_count.update(dict(zip(udp_sts["cn"], udp_sts["count"])))
-
-    print(f"Statistics at this runtime")
-    print(f"    NUM events: {num_evs}")
-    print(f"    NUM tcp flows analyzed: {num_tcp}")
-    print(f"    NUM udp flows analyzed: {num_udp}")
-
+    if len(os.listdir(folder)) == 0:
+        print(f"[ERROR]: {folder} is empty")
+        exit(2)
     
-    for test in os.listdir(os.path.join(folder, "tests")):
-        dir = os.path.join(folder, "tests")
-        bot = os.path.join(dir, test, LOG_BOT_COMPLETE)
-        tcp = os.path.join(dir, test, LOG_TCP_COMPLETE)
-        udp = os.path.join(dir, test, LOG_UDP_COMPLETE)
+    # Init new counters
+    streaming_periods = 0
+    cnames_tcp        = Counter()
+    cnames_udp        = Counter()
+    cnames_bytes_tcp  = Counter()
+    cnames_bytes_udp  = Counter()
+    
+    meta = f"meta/{server}"
 
-        tcp = pandas.read_csv(tcp, sep=" ")
-        udp = pandas.read_csv(udp, sep=" ")
+    try:
+        with open(os.path.join(meta, STREAMING_PERIODS_OBSERVED), "r") as f:
+            streaming_periods = int(f.readline().strip())
+    except:
+        pass
+    
+    if os.path.exists(os.path.join(meta, CPROVIDER_CNAMES_OBSERVED_TCP)):
+        stats = pandas.read_csv(os.path.join(meta, CPROVIDER_CNAMES_OBSERVED_TCP), sep=" ")
+        cnames_tcp.update(dict(zip(stats["cname"], stats["frequency"])))
+        
+        for cname, value in zip(stats["cname"], stats["volume"]):
+            cnames_bytes_tcp[cname] += value
 
-        evs = periods(path=bot)
+    if os.path.exists(os.path.join(meta, CPROVIDER_CNAMES_OBSERVED_UDP)):
+        stats = pandas.read_csv(os.path.join(meta, CPROVIDER_CNAMES_OBSERVED_UDP), sep=" ")
+        cnames_udp.update(dict(zip(stats["cname"], stats["frequency"])))
+        
+        for cname, value in zip(stats["cname"], stats["volume"]):
+            cnames_bytes_udp[cname] += value
+    
+    for test in os.listdir(folder):
+        bot_file = os.path.join(folder, test, LOG_BOT_COMPLETE)
+        tcp_file = os.path.join(folder, test, LOG_TCP_COMPLETE)
+        udp_file = os.path.join(folder, test, LOG_UDP_COMPLETE)
+        
+        tcp_data  = pandas.read_csv(tcp_file, sep=" ")
+        udp_data  = pandas.read_csv(udp_file, sep=" ")
+        intervals = periods(path=bot_file)
+        
+        for event in intervals:
+            ts = event[0]
+            te = event[1]
+            
+            # Update the number of streaming periods observed
+            streaming_periods += 1
+            
+            # Select all TCP/UDP flows overlapping the current streaming period
+            tcp_flows = tcp_data[(tcp_data["ts"] <= te) & (tcp_data["te"] >= ts)]
+            udp_flows = udp_data[(udp_data["ts"] <= te) & (udp_data["te"] >= ts)]
+            
+            # Update the CNAMEs observed in TCP
+            cnames_tcp.update(set(tcp_flows["cname"]))
+            
+            # Update the CNAMEs observed in UDP
+            cnames_udp.update(set(udp_flows["cname"]))
+            
+            # Update the bytes counter per each CNAME for TCP
+            for cname in tcp_flows["cname"].unique():
+                cnames_bytes_tcp[cname] += tcp_flows[tcp_flows["cname"] == cname]["s_bytes_all"].sum()
 
-        for evn in evs:
-            ts, te = evn[0], evn[1]
+            # Update the bytes counter per each CNAME for UDP
+            for cname in udp_flows["cname"].unique():
+                cnames_bytes_udp[cname] += udp_flows[udp_flows["cname"] == cname]["s_bytes_all"].sum()
 
-            """
-            =============================
-            =    Processing TCP Layer   =
-            =============================
-            """
+    with open(os.path.join(meta, STREAMING_PERIODS_OBSERVED), "w") as f:
+        f.write(f"{streaming_periods}\n")
+    
+    with open(os.path.join(meta, CPROVIDER_CNAMES_OBSERVED_TCP), "w") as f:
+        f.write("cname frequency volume\n")
+        for cname in cnames_tcp.keys():
+            freq = cnames_tcp[cname]
+            down = cnames_bytes_tcp[cname]
+            f.write(f"{cname} {freq} {(down)}\n")
 
-            flows = None
-            names = None
-
-            # Extract all TCP flows that overlap [ts; te]
-            flows = tcp[(tcp["ts"] <= te) & (tcp["te"] >= ts)]
-            names = set(flows["cn"].tolist())
-            tcp_count.update(names)
-            num_tcp += len(flows)
-
-            """
-            =============================
-            =    Processing UDP Layer   =
-            =============================
-            """
-
-            flows = None
-            names = None
-
-            # Extract all UDP flows that overlap [ts; te]
-            flows = udp[(udp["ts"] <= te) & (udp["te"] >= ts)]
-            names = set(flows["cn"].tolist())
-            udp_count.update(names)
-            num_udp += len(flows)
-
-            # Update the number of events processed
-            num_evs += 1
-
-    # Update on disk
-    with open(os.path.join(METADATA, EVENTS_COUNTER_FILE), "w") as f:
-        f.write(f"{num_evs}\n")
-    with open(os.path.join(METADATA, TCP_FLOWS_COUNTER_FILE), "w") as f:
-        f.write(f"{num_tcp}\n")
-    with open(os.path.join(METADATA, UDP_FLOWS_COUNTER_FILE), "w") as f:
-        f.write(f"{num_udp}\n")
-
-    # Write back updated statistics for TCP CNAMEs
-    with open(os.path.join(METADATA, CNAMES_OVER_TCP_FILE), "w") as f:
-        f.write("cn count\n")
-        for cname, count in tcp_count.items():
-            f.write(f"{cname} {count}\n")
-
-    # Write back updated statistics for UDP CNAMEs
-    with open(os.path.join(METADATA, CNAMES_OVER_UDP_FILE), "w") as f:
-        f.write("cn count\n")
-        for cname, count in udp_count.items():
-            f.write(f"{cname} {count}\n")
+    with open(os.path.join(meta, CPROVIDER_CNAMES_OBSERVED_UDP), "w") as f:
+        f.write("cname frequency volume\n")
+        for cname in cnames_udp.keys():
+            freq = cnames_udp[cname]
+            down = cnames_bytes_udp[cname]
+            f.write(f"{cname} {freq} {(down)}\n")
 
 if __name__ == "__main__":
-    print("-" * 50)
     main()
-    print("-" * 50)
