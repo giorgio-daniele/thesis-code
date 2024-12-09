@@ -1,11 +1,7 @@
 import os
-import time
-import numpy
 import pandas
 import argparse
 
-from collections import Counter
-from lib.generic import *
 
 def volume_formatter(num_bytes: float) -> str:
     units = ['B', 'KB', 'MB', 'GB', 'TB']
@@ -59,63 +55,43 @@ def args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--folder", required=True)
     parser.add_argument("--output", required=True)
-
-    args = parser.parse_args()
-
-    # Get the arguments
-    return args.folder, args.output
+    return parser.parse_args()
 
 def main():
-    folder, output = args()
+    # Extract the arguments
+    arguments = args()
 
-    print(f"MERGER is running on [{folder}] for service...")
+    # Access the argument values
+    folder = arguments.folder
+    output = arguments.output
     
-    corse = 10_000
-    fine  = 1_000
-    ratio = int(corse / fine)
+    ten_secs = 10_000
+    one_secs = 1_000
     
-    # Fine samples
-    dir = os.path.join(folder, "samples", "tcp", str(fine))
-    fine_sample_files  = sorted([os.path.join(dir, f) for f in os.listdir(dir)])
-
-    # Coarse samples
-    dir = os.path.join(folder, "samples", "tcp", str(corse))
-    coarse_sample_files = sorted([os.path.join(dir, f) for f in os.listdir(dir)])
-         
-    # Create the output directory if it does not exist yet
-    out = os.path.join(output, "TCP", os.path.basename(folder))
-    if not os.path.exists(out):
-        cmd = f"mkdir -p {out}"
-        os.system(cmd)
-
-    for num, (fine_samples_file, coarse_samples_file) in enumerate(zip(fine_sample_files, coarse_sample_files)):
-        frame = merge_data(coarse_samples_file=coarse_samples_file, fine_samples_file=fine_samples_file, ratio=ratio)
-        frame.to_csv(os.path.join(out, f"sample-{num}"), index=False, sep=" ")
-
-    #############################
-    #           UDP             #
-    #############################
+    protocol = "tcp"
+    
+    # Create the output folders
+    tcp_folder = os.path.join(output, "tcp")
+    udp_folder = os.path.join(output, "udp")
+    
+    os.makedirs(tcp_folder, exist_ok=True)
+    os.makedirs(udp_folder, exist_ok=True)
+    
+    for protocol in ["tcp", "udp"]: 
+        # Get 10 seconds samples
+        ten_secs_folder = os.path.join(folder, protocol, str(ten_secs))
+        ten_secs_files  = sorted([os.path.join(ten_secs_folder, f) for f in os.listdir(ten_secs_folder)])
         
-    # Fine samples
-    dir = os.path.join(folder, "samples", "udp", str(fine))
-    fine_sample_files  = sorted([os.path.join(dir, f) for f in os.listdir(dir)])
+        # Get 1  seconds samples
+        one_secs_folder = os.path.join(folder, protocol, str(one_secs))
+        one_secs_files  = sorted([os.path.join(one_secs_folder, f) for f in os.listdir(one_secs_folder)])
 
-    # Coarse samples
-    dir = os.path.join(folder, "samples", "udp", str(corse))
-    coarse_sample_files = sorted([os.path.join(dir, f) for f in os.listdir(dir)])
-         
-    # Create the output directory if it does not exist yet
-    out = os.path.join(output, "UDP", os.path.basename(folder))
-    if not os.path.exists(out):
-        cmd = f"mkdir -p {out}"
-        os.system(cmd)
-
-    for num, (fine_samples_file, coarse_samples_file) in enumerate(zip(fine_sample_files, coarse_sample_files)):
-        frame = merge_data(coarse_samples_file=coarse_samples_file, fine_samples_file=fine_samples_file, ratio=ratio)
-        frame.to_csv(os.path.join(out, f"sample-{num}"), index=False, sep=" ")
-
+        for num, (one_secs_file, ten_secs_file) in enumerate(zip(one_secs_files, ten_secs_files)):
+            frame = merge_data(coarse_samples_file=ten_secs_file, fine_samples_file=one_secs_file, ratio=int(ten_secs/one_secs))
+            if protocol == "tcp":
+                frame.to_csv(os.path.join(tcp_folder, f"sample-{num}"), index=False, sep=" ")
+            if protocol == "udp":
+                frame.to_csv(os.path.join(udp_folder, f"sample-{num}"), index=False, sep=" ")
 
 if __name__ == "__main__":
-    print("-" * 50)
     main()
-    print("-" * 50)

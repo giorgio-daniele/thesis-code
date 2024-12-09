@@ -2,6 +2,8 @@ import os
 import re
 import pandas
 import yaml
+import json
+import datetime
 import ipaddress
 import argparse
 import sys
@@ -39,80 +41,71 @@ TSTAT_BINARY = "tstat/tstat/tstat"
 TSTAT_CONFIG = "tstat/tstat-conf/runtime.conf"
 TSTAT_GLOBAL = "tstat/tstat-conf/globals.conf"
 
-def find_bitrate(resource, templates: list[dict]):
-    for template in templates:
-        for key, value in template.items():
-            if key in resource:
-                return value.get("bitrate", None)
-    return "-"
+def process_har(file: str, server: str, start: float) -> pandas.DataFrame:
+    
+    # Define the records 
+    records = []
+    
+    # Read the HAR file
+    with open(file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    
+    # Load manifests based on the server
+    manifest_paths = {
+        "dazn": [
+            os.path.join("src", "general_processing", "res", "dazn", "mpd_manifest_a.yaml"),
+            os.path.join("src", "general_processing", "res", "dazn", "mpd_manifest_b.yaml")
+        ]
+    }
+    
+    manifests = manifest_paths.get(server, [])
+    templates = [load_yaml_file(path=manifest) for manifest in manifests]
 
-def process_har(start: float, har: pandas.DataFrame, server: str) -> pandas.DataFrame:
-    try:
-        # Load manifests and templates based on the server
-        manifests = None
-        templates = []
-        if server == "dazn":
-            manifests = [
-                os.path.join("src", "general_processing", "res", "dazn", "mpd_manifest_a.yaml"),
-                os.path.join("src", "general_processing", "res", "dazn", "mpd_manifest_b.yaml"),
-            ]
-        if server == "nowtv":
-            # TODO
-            pass
-        if server == "netflix":
-            # TODO
-            pass
-
-        # Generate the entries
-        entries = pandas.json_normalize(har["log"]["entries"])
-
-        # Get the timestamp when the request has started
-        ts = pandas.to_datetime(entries["startedDateTime"])
-        ts = ts.astype(int) / 10**6
-        ts = ts - start
-
-        # Generate the timings
-        timings = entries.filter(regex="timings").fillna(0)
-        timings[timings < 0] = 0
-        offset = timings.sum(axis=1)
-
-        # Get the timestamp when the request has finished
-        te = ts + offset
-
-        # Get the MIME types
-        mime = entries.filter(regex="response.content.mimeType").iloc[:, 0]
-
-        # Get the URLs
-        urls = entries.filter(regex="request.url").iloc[:, 0]
-
-        # Get the hostnames
-        hostnames = urls.apply(lambda x: urlparse(x).hostname)
-
-        # Get the requested resources
-        resources = urls.apply(lambda x: urlparse(x).path)
-
-        # Load templates from the manifest files
-        for manifest in manifests:
-            templates.append(load_yaml_file(path=manifest))
-
-        # Get the rate of the requested resource (bitrate)
-        bitrates = resources.apply(lambda x: find_bitrate(x, templates))
-
-        # Generate the final frame
-        frame = pandas.DataFrame({
-            "ts": ts,
-            "te": te,
-            "hostname": hostnames,
-            "resource": resources,
-            "mime": mime,
-            "rate": bitrates,
-        })
-
-        return frame 
-
-    except Exception as e:
-        print(Fore.RED + f"Error in processing HAR: {e}")
-        sys.exit(1)
+    for entry in data["log"]["entries"]:
+        # Get ts
+        ft = "%Y-%m-%dT%H:%M:%S.%fZ"
+        ux = datetime.datetime(1970, 1, 1)
+        ts = (datetime.datetime.strptime(entry["startedDateTime"], ft) - ux).total_seconds() * 1000
+        ts = ts - (float(start))
+        
+        # Get te
+        ds = ["blocked", "dns", "send", "wait", "receive", "ssl"]
+        te = ts + sum(max(0, entry["timings"].get(k, 0)) for k in ds)
+        
+        # Get MIME
+        mime = entry.get("response", {}).get("content", {}).get("mimeType", "")
+        
+        # Parse the URL
+        data = urlparse(entry.get("request", {}).get("url", "-"))
+        
+        # Get the name of the machine
+        machine  = data.netloc
+        # Get the requested resource
+        resource = data.path
+        
+        # Default rate
+        rate = 0
+        
+        media = "video"
+        if media in resource:
+            for template in templates:
+                for key, value in template.items():
+                    if key in resource:
+                        rate = value.get("bitrate", 0)
+                        mime = "video/mp4"
+                    
+        media = "audio"
+        if media in resource:
+            for template in templates:
+                for key, value in template.items():
+                    if key in resource:
+                        rate = value.get("bitrate", 0)
+                        mime = "audio/mp4"
+                    
+        record = [ts, te, machine, resource, rate, mime]
+        records.append(record)
+        
+    return pandas.DataFrame(records, columns=["ts", "te", "hostname", "resource", "rate", "mime"])
 
 def args():
     parser = argparse.ArgumentParser()
@@ -136,6 +129,7 @@ def extract_cname(record: pandas.Series, protocol: Protocol) -> str:
             if layer_7_protocol == 27:      # QUIC
                 return record.get(SNI_CLIENT_HELLO_UDP, "-")
             return record.get(FULLY_QUALIFIED_NAME, "-")
+        
     except Exception as e:
         print(Fore.RED + f"Error in extracting CNAME: {e}")
         sys.exit(2)
@@ -208,9 +202,6 @@ def main():
                 # UDP
                 udp_complete = pandas.read_csv(os.path.join(output, test, LOG_UDP_COMPLETE), sep=" ")
                 udp_periodic = pandas.read_csv(os.path.join(output, test, LOG_UDP_PERIODIC), sep=" ")
-
-                # HTTP
-                har_complete_file = pandas.read_json(os.path.join(output, test, LOG_HAR_COMPLETE))
                 
                 # Define the list of columns by which selecting a flow
                 id_columns = ["s_ip", "s_port", "c_ip", "c_port"]
@@ -266,7 +257,7 @@ def main():
                 udp_periodic["te"] = udp_periodic["time_abs_start"] - exp_timestamp + udp_periodic["bin_duration"]
 
                 # Perform the HAR analysis
-                har_complete = process_har(exp_timestamp, har_complete_file, server)
+                har_complete = process_har(file=os.path.join(output, test, LOG_HAR_COMPLETE), server=server, start=exp_timestamp)
                 
                 # Save processed data
                 har_complete.to_csv(os.path.join(output, test, LOG_HAR_COMPLETE), sep=" ", index=False)
