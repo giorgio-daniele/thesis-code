@@ -172,7 +172,8 @@ def args():
 
 def main():
     # Define steps
-    steps = [i * 1000 for i in range(1, 11)]
+    #steps = [i * 1000 for i in range(1, 11)]
+    steps  = [1_000, 10_000]
     
     # Command line arguments
     folder, output, server = args()
@@ -253,10 +254,10 @@ def main():
             
             bins     = None
             protocol = None
-            if tcp_ratio >= 0.85:
+            if tcp_ratio >= 0.9:
                 bins     = tcp_has_bins
                 protocol = Protocol.TCP
-            if udp_ratio >= 0.85:
+            if udp_ratio >= 0.9:
                 bins     = udp_has_bins
                 protocol = Protocol.UDP
                 

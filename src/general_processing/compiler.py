@@ -30,11 +30,13 @@ from lib import fetch
 from lib import load_yaml_file
 
 # Useful Tstat names
-LAYER_7_PROTOCOL     = "con_t"
+LAYER_7_PROTOCOL_TCP = "con_t"
+LAYER_7_PROTOCOL_UDP = "c_type"
 SNI_CLIENT_HELLO_TCP = "c_tls_SNI"
 SNI_CLIENT_HELLO_UDP = "quic_SNI"
 HTTP_SERVER_HOSTNAME = "http_hostname"
-FULLY_QUALIFIED_NAME = "fqdn"
+FULLY_QUALIFIED_NAME_TCP = "fqdn"
+FULLY_QUALIFIED_NAME_UDP = "fqdn"
 
 # Useful Tstat configuration files
 TSTAT_BINARY = "tstat/tstat/tstat"
@@ -115,24 +117,29 @@ def args():
     return parser.parse_args()
 
 def extract_cname(record: pandas.Series, protocol: Protocol) -> str:
-    try:
-        if protocol == Protocol.TCP:
-            layer_7_protocol = record.get(LAYER_7_PROTOCOL, "-")
-            if layer_7_protocol == 8912:    # HTTPS
-                return record.get(SNI_CLIENT_HELLO_TCP, "-")
-            if layer_7_protocol == 1:       # HTTP
-                return record.get(HTTP_SERVER_HOSTNAME, "-")
-            return record.get(FULLY_QUALIFIED_NAME, "-")
-        
-        if protocol == Protocol.UDP:
-            layer_7_protocol = record.get(LAYER_7_PROTOCOL, "-")
-            if layer_7_protocol == 27:      # QUIC
-                return record.get(SNI_CLIENT_HELLO_UDP, "-")
-            return record.get(FULLY_QUALIFIED_NAME, "-")
-        
-    except Exception as e:
-        print(Fore.RED + f"Error in extracting CNAME: {e}")
-        sys.exit(2)
+    result = "-"
+    
+    https = 8192
+    http  = 1
+    quic  = 27
+    
+    if protocol == Protocol.TCP:
+        layer_7 = record.get(LAYER_7_PROTOCOL_TCP, 0)
+        if layer_7 == https:
+            result = record.get(SNI_CLIENT_HELLO_TCP, "-")
+        if layer_7 == http:
+            result = record.get(HTTP_SERVER_HOSTNAME, "-")
+        if result == "-":
+            result = record.get(FULLY_QUALIFIED_NAME_TCP, "-")
+
+    if protocol == Protocol.UDP:
+        layer_7 = record.get(LAYER_7_PROTOCOL_UDP, 0)
+        if layer_7 == quic:
+            result = record.get(SNI_CLIENT_HELLO_UDP, "-")
+        if result == "-":
+            result = record.get(FULLY_QUALIFIED_NAME_TCP, "-")
+            
+    return result
 
 def main():
     try:
